@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827">
+<title>VENEX JAN Scanner v8</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--line:#d9dee8;--text:#1f2937;--muted:#64748b;--orange:#f28c28;--green:#047857;--red:#b91c1c}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:"Meiryo UI","Yu Gothic UI",sans-serif}
+body{min-height:100dvh}
+header{position:sticky;top:0;z-index:20;background:#111827;color:#fff;padding:12px 14px;display:flex;align-items:center;gap:10px}
+header strong{font-size:16px}
+header small{margin-left:auto;color:#cbd5e1}
+.badge{font-size:11px;background:#f28c28;color:#fff;padding:3px 7px;border-radius:999px}
+main{max-width:680px;margin:0 auto;padding:8px}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:9px;margin-bottom:10px;box-shadow:0 6px 20px rgba(15,23,42,.06)}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.tabs button{border:1px solid #cbd5e1;background:#fff;border-radius:10px;padding:11px;font-weight:900}
+.tabs button.active{background:#111827;color:#fff;border-color:#111827}
+.camera-shell{position:relative;overflow:hidden;border-radius:12px;background:#000;height:min(68vh,620px);min-height:360px}
+#video{width:100%;height:100%;object-fit:cover;background:#000}
+.mask{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.30) 0%,rgba(0,0,0,.30) 37%,transparent 37%,transparent 63%,rgba(0,0,0,.30) 63%,rgba(0,0,0,.30) 100%);pointer-events:none}
+.scan-guide{position:absolute;left:3%;right:3%;top:37%;height:26%;border:3px solid #fff;border-radius:5px;pointer-events:none}
+.scan-line{position:absolute;left:5%;right:5%;top:50%;height:2px;background:#ff3b30;pointer-events:none}
+.guide-text{position:absolute;left:6%;top:39%;background:rgba(0,0,0,.72);color:#fff;border-radius:6px;padding:5px 8px;font-size:11px;pointer-events:none}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}
+button,select,input{font:inherit}
+.btn{border:1px solid #cbd5e1;background:#fff;border-radius:10px;padding:11px;font-weight:900}
+.btn.primary{background:var(--orange);border-color:var(--orange);color:#fff}
+.btn.dark{background:#111827;border-color:#111827;color:#fff}
+.btn:disabled{opacity:.45}
+.extra-controls{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}
+.zoom{display:none;margin-top:8px}
+.zoom.show{display:block}
+.zoom input{width:100%}
+.manual{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:9px}
+.manual input{min-width:0;border:1px solid #cbd5e1;border-radius:10px;padding:11px;font-size:18px;letter-spacing:.04em}
+.status{margin-top:9px;padding:10px 11px;border-radius:10px;background:#f1f5f9;font-size:12px;line-height:1.5}
+.status.ok{background:#ecfdf5;color:var(--green)}
+.status.err{background:#fef2f2;color:var(--red)}
+.status.warn{background:#fff7ed;color:#9a3412}
+.debug{font-size:11px;color:#64748b;margin-top:6px;word-break:break-all}
+.product{display:none;margin-top:10px;border:1px solid #e2e8f0;border-radius:11px;padding:11px}
+.product.show{display:grid;grid-template-columns:1fr auto;gap:4px 10px}
+.product strong{font-size:16px}
+.product small{color:var(--muted);grid-column:1/-1;line-height:1.5}
+.price{font-size:18px;font-weight:900}
+.inventory-options{display:none;margin-top:9px}
+.inventory-options.show{display:block}
+.inventory-options select{width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:11px;background:#fff}
+.summary{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}
+.summary>div{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:9px}
+.summary span{display:block;font-size:10px;color:var(--muted);font-weight:800}
+.summary strong{font-size:17px}
+.settings details{font-size:12px}
+.settings summary{cursor:pointer;font-weight:800}
+.settings-grid{display:grid;gap:7px;margin-top:9px}
+.settings-grid input{width:100%;border:1px solid #cbd5e1;border-radius:9px;padding:10px}
+.hidden-frame{position:absolute;width:1px;height:1px;border:0;opacity:0;pointer-events:none}
+#workCanvas{display:none}
+</style>
+</head>
+<body>
+
+<header>
+  <strong>VENEX JAN Scanner</strong>
+  <small id="cameraState">停止中</small>
+  <span class="badge">v8 ZBar WASM</span>
+</header>
+
+<main>
+  <section class="card">
+    <div class="tabs">
+      <button id="saleTab" class="active" type="button">レジ</button>
+      <button id="inventoryTab" type="button">在庫カウント</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="camera-shell">
+      <video id="video" playsinline muted></video>
+      <div class="mask"></div>
+      <div class="scan-guide"></div>
+      <div class="scan-line"></div>
+      <div class="guide-text">JANを赤線に重ねる</div>
+    </div>
+
+    <canvas id="workCanvas"></canvas>
+
+    <div class="controls">
+      <button id="startBtn" class="btn dark" type="button">📷 カメラ開始</button>
+      <button id="stopBtn" class="btn" type="button" disabled>停止</button>
+    </div>
+
+    <div class="extra-controls">
+      <button id="torchBtn" class="btn" type="button" disabled>🔦 ライト</button>
+      <button id="scanNowBtn" class="btn" type="button" disabled>◎ 今すぐ読取</button>
+    </div>
+
+    <div id="zoomWrap" class="zoom">
+      <label>ズーム <span id="zoomValue"></span></label>
+      <input id="zoomSlider" type="range" step="0.1">
+    </div>
+
+    <div class="manual">
+      <input id="manualJan" inputmode="numeric" maxlength="13" placeholder="JAN手入力">
+      <button id="manualBtn" class="btn" type="button">追加</button>
+    </div>
+
+    <div id="inventoryOptions" class="inventory-options">
+      <select id="location">
+        <option value="棚上">棚上</option>
+        <option value="棚下">棚下</option>
+      </select>
+    </div>
+
+    <div id="status" class="status">v8 ZBar WASM版です。「カメラ開始」を押してください。</div>
+    <div id="debug" class="debug"></div>
+    <div id="product" class="product"></div>
+  </section>
+
+  <section id="saleCard" class="card">
+    <button id="nextCustomerBtn" class="btn primary" type="button" style="width:100%">次のお客様</button>
+    <div class="summary">
+      <div><span>今回の読取点数</span><strong id="sessionQty">0点</strong></div>
+      <div><span>小計</span><strong id="sessionTotal">¥0</strong></div>
+    </div>
+  </section>
+
+  <section class="card settings">
+    <details id="settingsDetails">
+      <summary>⚙ 接続設定</summary>
+      <div class="settings-grid">
+        <label>Apps Script /exec URL
+          <input id="apiUrl" type="url">
+        </label>
+        <label>認証トークン
+          <input id="apiToken" type="password">
+        </label>
+        <button id="saveSettingsBtn" class="btn" type="button">設定を保存</button>
+      </div>
+    </details>
+  </section>
+</main>
+
+<iframe id="apiFrame" name="apiFrame" class="hidden-frame"></iframe>
+
+<script type="module">
+import * as zbarWasm from 'https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/index.js';
+
+const $ = id => document.getElementById(id);
+
+const state = {
+  mode:'sale',
+  stream:null,
+  track:null,
+  scanning:false,
+  scanBusy:false,
+  apiBusy:false,
+  timer:0,
+  torch:false,
+  lastAccepted:'',
+  lastAcceptedAt:0,
+  newCheckout:true,
+  sessionQty:0,
+  sessionTotal:0,
+  pending:new Map()
+};
+
+function money(n){ return '¥' + Number(n||0).toLocaleString('ja-JP'); }
+function status(text,kind=''){ const e=$('status'); e.textContent=text; e.className='status'+(kind?' '+kind:''); }
+function debug(text=''){ $('debug').textContent=text; }
+
+function settings(){
+  return {
+    url:localStorage.getItem('venexJanApiUrl')||'',
+    token:localStorage.getItem('venexJanApiToken')||''
+  };
+}
+
+function loadSettings(){
+  const s=settings();
+  $('apiUrl').value=s.url;
+  $('apiToken').value=s.token;
+  if(!s.url||!s.token) $('settingsDetails').open=true;
+}
+
+function saveSettings(){
+  const url=$('apiUrl').value.trim();
+  const token=$('apiToken').value.trim();
+  if(!url.endsWith('/exec')) return status('URLは /exec で終わるものを入力してください。','err');
+  if(!token) return status('認証トークンを入力してください。','err');
+  localStorage.setItem('venexJanApiUrl',url);
+  localStorage.setItem('venexJanApiToken',token);
+  $('settingsDetails').open=false;
+  status('接続設定を保存しました。','ok');
+}
+
+function validEan13(code){
+  if(!/^\d{13}$/.test(code)) return false;
+  let sum=0;
+  for(let i=0;i<12;i++) sum += Number(code[i])*(i%2===0?1:3);
+  return ((10-(sum%10))%10)===Number(code[12]);
+}
+
+async function startScanner(){
+  if(state.scanning) return;
+
+  const s=settings();
+  if(!s.url||!s.token){
+    $('settingsDetails').open=true;
+    return status('先に接続設定を入力してください。','err');
+  }
+
+  $('startBtn').disabled=true;
+  status('カメラを起動しています…');
+
+  try{
+    state.stream=await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:{ideal:'environment'},
+        width:{ideal:3840,min:1280},
+        height:{ideal:2160,min:720}
+      },
+      audio:false
+    });
+
+    state.track=state.stream.getVideoTracks()[0];
+
+    const caps=state.track.getCapabilities ? state.track.getCapabilities() : {};
+
+    try{
+      if(caps.focusMode && caps.focusMode.includes('continuous')){
+        await state.track.applyConstraints({advanced:[{focusMode:'continuous'}]});
+      }
+    }catch(e){}
+
+    if(caps.zoom){
+      $('zoomWrap').classList.add('show');
+      $('zoomSlider').min=caps.zoom.min;
+      $('zoomSlider').max=caps.zoom.max;
+      $('zoomSlider').step=caps.zoom.step||0.1;
+
+      const z=Math.min(caps.zoom.max,Math.max(caps.zoom.min,1.8));
+      $('zoomSlider').value=z;
+      $('zoomValue').textContent=z.toFixed(1)+'x';
+
+      try{
+        await state.track.applyConstraints({advanced:[{zoom:z}]});
+      }catch(e){}
+    }
+
+    if(caps.torch){
+      $('torchBtn').disabled=false;
+    }
+
+    const video=$('video');
+    video.srcObject=state.stream;
+    await video.play();
+
+    state.scanning=true;
+    $('stopBtn').disabled=false;
+    $('scanNowBtn').disabled=false;
+    $('cameraState').textContent='読取中';
+
+    const settingsNow=state.track.getSettings ? state.track.getSettings() : {};
+    debug(
+      'ZBar WASM / '+(settingsNow.width||'?')+'×'+(settingsNow.height||'?')+
+      ' / focus '+(settingsNow.focusMode||'auto')
+    );
+    status('バーコードを赤線に重ねてください。自動で約0.35秒ごとに解析します。','ok');
+
+    scheduleScan();
+
+  }catch(e){
+    $('startBtn').disabled=false;
+    $('stopBtn').disabled=true;
+    $('scanNowBtn').disabled=true;
+    $('cameraState').textContent='停止中';
+    status('カメラ開始エラー: '+String(e.message||e),'err');
+  }
+}
+
+function scheduleScan(){
+  clearTimeout(state.timer);
+  if(!state.scanning) return;
+
+  state.timer=setTimeout(async()=>{
+    await scanFrame();
+    scheduleScan();
+  },350);
+}
+
+async function scanFrame(){
+  if(!state.scanning || state.scanBusy || state.apiBusy) return;
+  state.scanBusy=true;
+
+  try{
+    const video=$('video');
+    if(video.readyState<2 || !video.videoWidth || !video.videoHeight) return;
+
+    const vw=video.videoWidth;
+    const vh=video.videoHeight;
+
+    // 画面中央の横長領域。左右のquiet zoneも残す。
+    const sx=Math.floor(vw*0.02);
+    const sy=Math.floor(vh*0.34);
+    const sw=Math.floor(vw*0.96);
+    const sh=Math.floor(vh*0.32);
+
+    const canvas=$('workCanvas');
+
+    // WASM負荷を抑えつつバー幅を十分残す。
+    const targetW=Math.min(1800,sw);
+    const scale=targetW/sw;
+    const targetH=Math.max(180,Math.round(sh*scale));
+
+    canvas.width=targetW;
+    canvas.height=targetH;
+
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    ctx.imageSmoothingEnabled=false;
+    ctx.drawImage(video,sx,sy,sw,sh,0,0,targetW,targetH);
+
+    const imageData=ctx.getImageData(0,0,targetW,targetH);
+    const symbols=await zbarWasm.scanImageData(imageData);
+
+    if(!symbols || !symbols.length){
+      debug('解析中… '+targetW+'×'+targetH+' / 未検出');
+      return;
+    }
+
+    for(const symbol of symbols){
+      let raw='';
+      try{
+        raw=typeof symbol.decode==='function'
+          ? symbol.decode()
+          : new TextDecoder().decode(symbol.rawData||new Uint8Array());
+      }catch(e){}
+
+      const code=String(raw||'').replace(/\D/g,'');
+      const type=String(symbol.typeName||symbol.type||'');
+
+      debug('候補 '+type+' : '+code);
+
+      if(!validEan13(code)) continue;
+
+      const now=Date.now();
+      if(code===state.lastAccepted && now-state.lastAcceptedAt<1800) continue;
+
+      state.lastAccepted=code;
+      state.lastAcceptedAt=now;
+
+      await handleJan(code,'カメラ');
+      break;
+    }
+
+  }catch(e){
+    debug('解析エラー: '+String(e.message||e));
+  }finally{
+    state.scanBusy=false;
+  }
+}
+
+function stopScanner(){
+  clearTimeout(state.timer);
+  state.timer=0;
+
+  if(state.stream){
+    state.stream.getTracks().forEach(t=>t.stop());
+  }
+
+  state.stream=null;
+  state.track=null;
+  state.scanning=false;
+  state.torch=false;
+
+  $('startBtn').disabled=false;
+  $('stopBtn').disabled=true;
+  $('scanNowBtn').disabled=true;
+  $('torchBtn').disabled=true;
+  $('zoomWrap').classList.remove('show');
+  $('cameraState').textContent='停止中';
+  status('カメラを停止しました。');
+}
+
+function setMode(mode){
+  state.mode=mode;
+  $('saleTab').classList.toggle('active',mode==='sale');
+  $('inventoryTab').classList.toggle('active',mode==='inventory');
+  $('inventoryOptions').classList.toggle('show',mode==='inventory');
+  $('saleCard').style.display=mode==='sale'?'block':'none';
+}
+
+function postToApi(params){
+  const s=settings();
+
+  return new Promise((resolve,reject)=>{
+    const requestId=Date.now().toString(36)+Math.random().toString(36).slice(2);
+
+    const timer=setTimeout(()=>{
+      state.pending.delete(requestId);
+      reject(new Error('Apps Scriptから応答がありません。'));
+    },12000);
+
+    state.pending.set(requestId,{resolve,reject,timer});
+
+    const form=document.createElement('form');
+    form.method='POST';
+    form.action=s.url;
+    form.target='apiFrame';
+    form.style.display='none';
+
+    const all={...params,requestId,token:s.token};
+
+    Object.entries(all).forEach(([k,v])=>{
+      const input=document.createElement('input');
+      input.type='hidden';
+      input.name=k;
+      input.value=String(v??'');
+      form.appendChild(input);
+    });
+
+    document.body.appendChild(form);
+    form.submit();
+    setTimeout(()=>form.remove(),1000);
+  });
+}
+
+window.addEventListener('message',e=>{
+  const data=e.data;
+  if(!data||!data.requestId) return;
+
+  const p=state.pending.get(data.requestId);
+  if(!p) return;
+
+  clearTimeout(p.timer);
+  state.pending.delete(data.requestId);
+
+  if(data.ok) p.resolve(data);
+  else p.reject(new Error(data.error||'Apps Scriptエラー'));
+});
+
+async function handleJan(raw,source){
+  if(state.apiBusy) return;
+
+  const jan=String(raw||'').replace(/\D/g,'');
+
+  if(!validEan13(jan)){
+    return status('正しい13桁JANではありません。','err');
+  }
+
+  state.apiBusy=true;
+  status('JAN '+jan+' を検出。登録しています…','warn');
+
+  try{
+    const params=state.mode==='sale'
+      ? {action:'sale',jan,newCheckout:state.newCheckout?'1':'0'}
+      : {action:'inventory',jan,location:$('location').value};
+
+    const r=await postToApi(params);
+    const p=r.product||{};
+
+    $('product').className='product show';
+    $('product').innerHTML=
+      '<strong>'+String(p.name||'')+'</strong>'+
+      '<div class="price">'+money(p.price)+'</div>'+
+      '<small>'+[p.color,p.size].filter(Boolean).join(' / ')+
+      '<br>JAN '+String(p.jan||jan)+'</small>';
+
+    if(state.mode==='sale'){
+      state.newCheckout=false;
+      state.sessionQty++;
+      state.sessionTotal+=Number(p.price||0);
+      $('sessionQty').textContent=state.sessionQty+'点';
+      $('sessionTotal').textContent=money(state.sessionTotal);
+      status('✓ '+p.name+' を登録しました。','ok');
+    }else{
+      status('✓ '+p.name+' を '+r.location+' に追加しました。','ok');
+    }
+
+    try{
+      if(navigator.vibrate) navigator.vibrate([70,30,70]);
+    }catch(e){}
+
+  }catch(e){
+    status(e.message||String(e),'err');
+  }finally{
+    state.apiBusy=false;
+  }
+}
+
+$('startBtn').onclick=startScanner;
+$('stopBtn').onclick=stopScanner;
+$('scanNowBtn').onclick=scanFrame;
+$('saveSettingsBtn').onclick=saveSettings;
+
+$('saleTab').onclick=()=>setMode('sale');
+$('inventoryTab').onclick=()=>setMode('inventory');
+
+$('manualBtn').onclick=()=>handleJan($('manualJan').value,'手入力');
+
+$('manualJan').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){
+    e.preventDefault();
+    handleJan(e.target.value,'手入力');
+  }
+});
+
+$('torchBtn').onclick=async()=>{
+  if(!state.track) return;
+  state.torch=!state.torch;
+  try{
+    await state.track.applyConstraints({advanced:[{torch:state.torch}]});
+    $('torchBtn').textContent=state.torch?'🔦 ライトON':'🔦 ライト';
+  }catch(e){
+    state.torch=false;
+    status('この端末ではライト制御が使えません。','err');
+  }
+};
+
+$('zoomSlider').addEventListener('input',async e=>{
+  const z=Number(e.target.value);
+  $('zoomValue').textContent=z.toFixed(1)+'x';
+
+  if(state.track){
+    try{
+      await state.track.applyConstraints({advanced:[{zoom:z}]});
+    }catch(e){}
+  }
+});
+
+$('nextCustomerBtn').onclick=()=>{
+  state.newCheckout=true;
+  state.sessionQty=0;
+  state.sessionTotal=0;
+  $('sessionQty').textContent='0点';
+  $('sessionTotal').textContent='¥0';
+  status('次に読むJANから新しい会計です。','ok');
+};
+
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden && state.scanning) stopScanner();
+});
+
+loadSettings();
+</script>
+</body>
+</html>
